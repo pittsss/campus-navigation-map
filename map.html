@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Campus Map - BSC Campus Navigator</title>
+    <link rel="stylesheet" href="map.css">
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+
+<body>
+    <div class="app">
+
+        <!-- ============ SIDE PANEL ============ -->
+        <aside class="panel">
+            <header class="panel-header">
+                <a href="index.html" class="back" title="Back to welcome page" aria-label="Back to welcome page">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                        stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+                </a>
+                <img src="logo.png" alt="BSC logo" class="mini-logo">
+                <div>
+                    <h1>Campus Navigator</h1>
+                    <p id="siteSubtitle">Batanes State College · Main Building</p>
+                </div>
+            </header>
+
+            <!-- Campus switch -->
+            <nav class="site-switch" aria-label="Choose campus">
+                <a href="map.html" data-site="main">Main campus</a>
+                <a href="map.html?site=agri" data-site="agri">Agricultural Lab</a>
+            </nav>
+
+            <!-- Route form -->
+            <section class="card">
+                <form id="routeForm" class="route-form">
+                    <div class="route-fields">
+                        <label class="field">
+                            <span class="dot dot-from" aria-hidden="true"></span>
+                            <span class="sr-only">Starting point</span>
+                            <select id="fromSelect" required>
+                                <option value="">Choose starting point</option>
+                            </select>
+                        </label>
+                        <label class="field">
+                            <span class="dot dot-to" aria-hidden="true"></span>
+                            <span class="sr-only">Destination</span>
+                            <select id="toSelect" required>
+                                <option value="">Choose destination</option>
+                            </select>
+                        </label>
+                        <button type="button" id="swapBtn" class="swap" title="Swap start and destination"
+                            aria-label="Swap start and destination">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                                stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>
+                        </button>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn primary">Get directions</button>
+                        <button type="button" id="clearBtn" class="btn ghost">Clear</button>
+                    </div>
+                </form>
+            </section>
+
+            <p id="routeError" class="error" hidden></p>
+
+            <!-- Route result -->
+            <section id="routeResult" class="card" hidden>
+                <div class="summary">
+                    <div><strong id="sumDist">–</strong><span>distance</span></div>
+                    <div><strong id="sumTime">–</strong><span>walk</span></div>
+                    <button id="copyLinkBtn" class="btn ghost small" type="button">Copy link</button>
+                </div>
+                <ol id="steps" class="steps"></ol>
+            </section>
+
+            <!-- BSC Agricultural Laboratory (second campus, Google Maps) -->
+            <section class="card campus2" aria-labelledby="campus2Title">
+                <div class="campus2-head">
+                    <div>
+                        <h2 id="campus2Title">BSC Agricultural Laboratory</h2>
+                        <p id="campus2Meta">About 0.7 km away</p>
+                    </div>
+                    <div class="mode-switch" role="group" aria-label="Travel mode">
+                        <button type="button" data-mode="walking" class="on" aria-pressed="true">Walk</button>
+                        <button type="button" data-mode="driving" aria-pressed="false">Drive</button>
+                    </div>
+                </div>
+                <iframe id="campus2Map" class="campus2-map" title="Route from the main campus to the BSC Agricultural Laboratory"
+                    loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+                <div class="campus2-actions">
+                    <a id="campus2FromMain" class="btn primary" target="_blank" rel="noopener">From main campus</a>
+                    <a id="campus2FromHere" class="btn ghost" target="_blank" rel="noopener">From my location</a>
+                </div>
+            </section>
+
+            <!-- Browse / search -->
+            <section class="card browse">
+                <input id="searchInput" type="search" placeholder="Search rooms, offices, exits…" autocomplete="off">
+                <div id="placeList" class="place-list"></div>
+            </section>
+        </aside>
+
+        <!-- ============ 3D VIEWPORT ============ -->
+        <main id="viewport" class="viewport">
+            <div class="toolbar">
+                <div id="floorSwitch" class="floor-switch" role="group" aria-label="Choose floor"></div>
+                <button id="resetViewBtn" type="button" title="Show the whole campus">Reset view</button>
+                <button id="topViewBtn" type="button" title="Look straight down">Top view</button>
+                <button id="xrayBtn" type="button" class="toggle" aria-pressed="false" title="Make walls see-through">See-through walls</button>
+                <button id="labelsBtn" type="button" class="toggle on" aria-pressed="true" title="Show or hide room labels">Labels</button>
+            </div>
+
+            <div id="infoCard" class="info-card" hidden>
+                <button id="infoClose" class="close" type="button" aria-label="Close">×</button>
+                <span id="infoCat" class="chip"></span>
+                <h2 id="infoName"></h2>
+                <div class="info-actions">
+                    <button id="infoFrom" class="btn ghost" type="button">Start here</button>
+                    <button id="infoTo" class="btn primary" type="button">Directions to here</button>
+                </div>
+            </div>
+
+            <div class="legend" aria-hidden="true">
+                <span><i class="dot dot-from"></i>Start</span>
+                <span><i class="dot dot-to"></i>Destination</span>
+                <span><i class="line"></i>Route</span>
+            </div>
+
+            <div id="loader" class="loader">
+                <div class="spinner"></div>
+                <p id="loaderText">Loading 3D campus…</p>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // ES modules and the 3D model can't load from file:// — explain how to run it.
+        if (location.protocol === 'file:') {
+            document.getElementById('loaderText').innerHTML =
+                'The 3D map needs a local web server.<br>In this folder run <code>node server.js</code>, ' +
+                'then open <code>http://localhost:3000</code>.';
+            document.querySelector('#loader .spinner').hidden = true;
+        }
+    </script>
+    <script src="campus-link.js"></script>
+    <script type="module" src="map.js"></script>
+</body>
+
+</html>

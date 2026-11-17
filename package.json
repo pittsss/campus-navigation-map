@@ -1,0 +1,11 @@
+{
+  "name": "campus-navigation-map",
+  "version": "1.0.0",
+  "private": true,
+  "description": "3D campus navigation map (static files served by a tiny Node server)",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "compress-models": "node tools/compress-models.mjs"
+  }
+}
