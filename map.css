@@ -955,6 +955,16 @@ input {
     height: auto;
 }
 
+/* The full-screen card lives inside the side panel, whose z-index caps it, so lift the whole panel
+   above the 3D view (its floating name tags would otherwise show through), and hide those tags. */
+body.campus2-fullscreen .panel {
+    z-index: 3000;
+}
+
+body.campus2-fullscreen .viewport .labels {
+    visibility: hidden;
+}
+
 body.campus2-fullscreen {
     overflow: hidden;
 }
