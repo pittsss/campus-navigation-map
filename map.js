@@ -744,7 +744,14 @@ function buildGrid(floor) {
     console.info(`[map] ${floor.name} nav grid ${nx}×${nz}, ${walls.length} walls, ${doors.length} doors, ${bridged} gap cells bridged`);
 }
 
+// g.penalty (only while looking for an alternative route): per-cell factors that make the
+// first route's cells look more expensive, so the search finds a different way.
 function cellCost(g, i, allow) {
+    const c = baseCellCost(g, i, allow);
+    return g.penalty && c !== Infinity ? c * g.penalty[i] : c;
+}
+
+function baseCellCost(g, i, allow) {
     if (g.blocked[i]) return Infinity;
     const o = g.owner[i];
     if (o >= 0) {
@@ -1046,10 +1053,10 @@ function smoothCells(floor, cells, allow) {
     return out;
 }
 
-function findRoute(fromKey, toKey) {
+function findRoute(fromKey, toKey, { gridOnly = false } = {}) {
     const A = places.get(fromKey), B = places.get(toKey);
     // Hand-drawn walking paths win; the automatic route is only the fallback.
-    const drawn = pathNet?.route(A, B);
+    const drawn = gridOnly ? null : pathNet?.route(A, B);
     if (drawn) return drawn;
     const allow = new Set([A.index, B.index]);
     const s = nearestPassable(A.floor.grid, cellOf(A.floor.grid, A.center), allow, A.floors.length ? A.index : -1);
@@ -1082,6 +1089,80 @@ function findRoute(fromKey, toKey) {
     }
     console.info(`[map] route ${A.key} → ${B.key}: ${runs.reduce((n, r) => n + r.pts.length, 0)} corners, ${runs.length} floor(s), ${(performance.now() - t0).toFixed(0)} ms`);
     return { A, B, runs, allow };
+}
+
+/* ---------- alternative route ---------- */
+
+// Distance from point p to the nearest segment of a polyline.
+function distToPolyline(p, pts) {
+    let best = Infinity;
+    const ab = new THREE.Vector2(), ap = new THREE.Vector2();
+    for (let i = 0; i < pts.length - 1; i++) {
+        ab.subVectors(pts[i + 1], pts[i]);
+        ap.subVectors(p, pts[i]);
+        const t = ab.lengthSq() ? Math.max(0, Math.min(1, ap.dot(ab) / ab.lengthSq())) : 0;
+        best = Math.min(best, ap.sub(ab.multiplyScalar(t)).length());
+    }
+    return best;
+}
+
+// Share of route `r` (by length) that runs within `near` metres of route `base` on the same floor.
+function overlapShare(r, base, near = 1.5) {
+    let total = 0, shared = 0;
+    for (const run of r.runs) {
+        const others = base.runs.filter(b => b.floor === run.floor).map(b => b.pts);
+        for (let i = 0; i < run.pts.length - 1; i++) {
+            const len = run.pts[i].distanceTo(run.pts[i + 1]);
+            const n = Math.max(1, Math.ceil(len));
+            for (let k = 0; k < n; k++) {
+                const p = run.pts[i].clone().lerp(run.pts[i + 1], (k + 0.5) / n);
+                total += len / n;
+                if (others.some(o => distToPolyline(p, o) <= near)) shared += len / n;
+            }
+        }
+    }
+    return total ? shared / total : 1;
+}
+
+// Another reasonable way between the same two places: make the first route's paths (or cells)
+// look more expensive and search again. Kept only if it really is a different way (less than
+// 75% shared) and not much longer (at most 1.6× and +150 m). Returns null when there's none.
+const ALT_MAX_SHARED = 0.75, ALT_MAX_RATIO = 1.6, ALT_MAX_EXTRA = 150;
+function findAlternative(best, bestTotal) {
+    const { A, B } = best;
+    const t0 = performance.now();
+    for (const factor of [3, 8]) {
+        let alt = null;
+        if (best.drawn) {
+            alt = pathNet.route(A, B, new Map(best.edgeKeys.map(k => [k, factor])));
+        } else {
+            for (const f of floors) {
+                const G = f.grid, runs = best.runs.filter(r => r.floor === f);
+                if (!runs.length) continue;
+                G.penalty = new Float32Array(G.nx * G.nz).fill(1);
+                const reach = 2.5, c = new THREE.Vector2();
+                for (const r of runs) for (let i = 0; i < r.pts.length - 1; i++) {
+                    const a = r.pts[i], b = r.pts[i + 1];
+                    const x0 = Math.floor((Math.min(a.x, b.x) - reach - G.ox) / CELL), x1 = Math.ceil((Math.max(a.x, b.x) + reach - G.ox) / CELL);
+                    const z0 = Math.floor((Math.min(a.y, b.y) - reach - G.oz) / CELL), z1 = Math.ceil((Math.max(a.y, b.y) + reach - G.oz) / CELL);
+                    for (let z = Math.max(0, z0); z <= Math.min(G.nz - 1, z1); z++) for (let x = Math.max(0, x0); x <= Math.min(G.nx - 1, x1); x++) {
+                        c.set(G.ox + (x + 0.5) * CELL, G.oz + (z + 0.5) * CELL);
+                        if (distToPolyline(c, [a, b]) <= reach) G.penalty[z * G.nx + x] = factor;
+                    }
+                }
+            }
+            try { alt = findRoute(A.key, B.key, { gridOnly: true }); }
+            finally { for (const f of floors) f.grid.penalty = null; }
+        }
+        if (!alt) continue;
+        const total = routeGeometry(alt.runs).total;
+        const shared = overlapShare(alt, best);
+        if (shared < ALT_MAX_SHARED && total <= bestTotal * ALT_MAX_RATIO && total <= bestTotal + ALT_MAX_EXTRA) {
+            console.info(`[map] alternative route: ${total.toFixed(0)} m vs ${bestTotal.toFixed(0)} m, ${(shared * 100).toFixed(0)}% shared, ${(performance.now() - t0).toFixed(0)} ms`);
+            return alt;
+        }
+    }
+    return null;
 }
 
 /* =========================================================
@@ -1336,12 +1417,8 @@ function clearRoute() {
     refreshHighlights();
 }
 
-function drawRoute(result) {
-    clearRoute();
-    const { A, B, runs } = result;
-    const group = new THREE.Group();
-
-    // 3D points following each floor's height; stairs are the straight links between runs
+// 3D points along a route, following each floor's height; stairs are the straight links between runs.
+function routePoints3(runs) {
     const v3 = [];
     for (const r of runs) {
         const pts = r.pts;
@@ -1357,6 +1434,27 @@ function drawRoute(result) {
     }
     for (let i = v3.length - 1; i > 0; i--) if (v3[i].distanceToSquared(v3[i - 1]) < 1e-6) v3.splice(i, 1);
     if (v3.length < 2) v3.push(v3[0].clone().add(new THREE.Vector3(0.01, 0, 0)));
+    return v3;
+}
+
+// `other`: the route not chosen (shown as a faint grey line, so both ways are visible).
+function drawRoute(result, other = null) {
+    clearRoute();
+    const { A, B, runs } = result;
+    const group = new THREE.Group();
+    const v3 = routePoints3(runs);
+
+    if (other) {
+        const o3 = routePoints3(other.runs);
+        const oc = new THREE.CurvePath();
+        for (let i = 0; i < o3.length - 1; i++) oc.add(new THREE.LineCurve3(o3[i], o3[i + 1]));
+        const og = new THREE.TubeGeometry(oc, Math.max(32, o3.length * 3), 0.09, 8, false);
+        group.add(new THREE.Mesh(og, new THREE.MeshBasicMaterial({ color: 0x6f8578, transparent: true, opacity: 0.75 })));
+        const oghost = new THREE.Mesh(og.clone(),
+            new THREE.MeshBasicMaterial({ color: 0x6f8578, transparent: true, opacity: 0.25, depthTest: false, depthWrite: false }));
+        oghost.renderOrder = 9;
+        group.add(oghost);
+    }
 
     const curve = new THREE.CurvePath();
     for (let i = 0; i < v3.length - 1; i++) curve.add(new THREE.LineCurve3(v3[i], v3[i + 1]));
@@ -1399,7 +1497,7 @@ function drawRoute(result) {
     route = { A, B, runs, curve, length, group, arrows, walker, endPin, startPin, steps, total };
     setActiveFloor(B.floor.id, false);
     refreshHighlights();
-    fitBox(new THREE.Box3().setFromPoints(v3), true, 1.5);
+    fitBox(new THREE.Box3().setFromPoints(other ? [...v3, ...routePoints3(other.runs)] : v3), true, 1.5);
 }
 
 const tmpTangent = new THREE.Vector3();
@@ -1718,7 +1816,41 @@ function showRoute(fromKey, toKey) {
     }
     selectedKey = null;
     infoCard.hidden = true;
-    drawRoute(result);
+
+    // The shortest route, plus another reasonable way when there is one.
+    const bestTotal = routeGeometry(result.runs).total;
+    const alt = findAlternative(result, bestTotal);
+    routeOptions = alt ? [result, alt] : [result];
+    // A shared link can ask for the other route (&alt=1) — only for the same start and destination.
+    const q = new URLSearchParams(location.search);
+    const wanted = q.get('from') === fromKey && q.get('to') === toKey ? +q.get('alt') || 0 : 0;
+    presentRoute(fromKey, toKey, wanted < routeOptions.length ? wanted : 0);
+}
+
+let routeOptions = [];   // [shortest, alternative?] for the current start and destination
+
+function presentRoute(fromKey, toKey, index) {
+    const result = routeOptions[index];
+    drawRoute(result, routeOptions.length > 1 ? routeOptions[1 - index] : null);
+
+    // Route 1 / Route 2 buttons
+    const opts = $('routeOptions');
+    opts.innerHTML = '';
+    opts.hidden = routeOptions.length < 2;
+    if (routeOptions.length > 1) {
+        const totals = routeOptions.map(r => routeGeometry(r.runs).total);
+        totals.forEach((t, i) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'route-option' + (i === index ? ' on' : '');
+            b.setAttribute('aria-pressed', i === index);
+            const diff = t - totals[0];
+            b.innerHTML = `<strong>${i === 0 ? 'Shortest route' : 'Other route'}</strong>` +
+                `<span>${fmtDist(t)} · ${fmtTime(t)}${i > 0 && diff >= 5 ? ` · +${fmtDist(diff)}` : ''}</span>`;
+            b.addEventListener('click', () => { if (i !== index) presentRoute(fromKey, toKey, i); });
+            opts.appendChild(b);
+        });
+    }
 
     $('sumDist').textContent = fmtDist(route.total);
     $('sumTime').textContent = fmtTime(route.total);
@@ -1741,6 +1873,7 @@ function showRoute(fromKey, toKey) {
     const url = new URL(location.href);
     url.searchParams.set('from', fromKey);
     url.searchParams.set('to', toKey);
+    if (index) url.searchParams.set('alt', index); else url.searchParams.delete('alt');
     history.replaceState(null, '', url);
 }
 

@@ -267,6 +267,54 @@ input {
    ROUTE RESULT
 ========================= */
 
+/* Shortest / other route choice (3D map and the campus-to-campus map) */
+.route-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 6px;
+    margin: 10px 0 4px;
+}
+
+.route-options[hidden] {
+    display: none;
+}
+
+.route-option {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    text-align: left;
+    border: 1.5px solid var(--line);
+    background: var(--panel);
+    border-radius: 10px;
+    padding: 7px 10px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.route-option strong {
+    font-size: 13px;
+    color: var(--ink);
+}
+
+.route-option.on {
+    border-color: var(--green);
+    background: var(--green-soft);
+}
+
+.route-option.on strong {
+    color: var(--green-dark);
+}
+
+.route-option .tag {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+}
+
 .summary {
     display: flex;
     align-items: center;
@@ -815,6 +863,16 @@ input {
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+
+.campus2-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.campus2 .route-options {
+    margin: 0;
 }
 
 .campus2-help {

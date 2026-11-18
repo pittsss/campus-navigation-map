@@ -16,18 +16,27 @@ Open http://localhost:3000/map.html (Agricultural Lab: `map.html?site=agri`).
 Open `map.html?edit=1` (or `map.html?site=agri&edit=1`) while `pnpm dev` is running, draw, then **Save**.
 The paths are stored in `paths.json`; commit and push it to publish.
 
-## Draw the route between the two campuses
+**Get directions** also offers a second route when there's a sensibly different way (another corridor or
+stair, at most 1.6× and 150 m longer): pick **Shortest route** or **Other route**; the other one shows as a
+faint grey line.
 
-The small map under "BSC Agricultural Laboratory" shows a hand-drawn route (Google's route there is wrong).
-Open `map.html?editroute=1` while `pnpm dev` is running. Pick **Walk** or **Drive**, then click along the
-real route starting at the main campus (switch to **Satellite** to see footpaths). Click the line to add a
-point in between, drag a point to move it, click a point to delete it. Press **Save**: the route is stored in
-`campus-route.json`. Commit and push it to publish.
+## Routes between the two campuses
 
-Directions stay on this map (no Google Maps): **Show route** zooms to the drawn route, and **From my location**
-follows the phone's GPS position along it live, with the distance and time left, a dashed line back to the
-route when off it, and "You've arrived" at the end. The **Drive** option only appears once a driving route
-has been drawn.
+The small map under "BSC Agricultural Laboratory" lists every route, shortest first:
+
+- **Drawn routes** (`campus-route.json`), checked on the ground. Open `map.html?editroute=1` while
+  `pnpm dev` is running. Pick **Walk** or **Drive** and a route tab (**+ New route** adds another), then
+  click along the real route starting at the main campus (switch to **Satellite** to see footpaths). Click
+  the line to add a point in between, drag a point to move it, click a point to delete it. **Save**, then
+  commit and push `campus-route.json`.
+- **OpenStreetMap suggestions** (`osm-routes.json`, blue dashes), worked out from mapped roads and paths;
+  not checked on the ground. Refresh them with `node tools/fetch-osm-routes.mjs`.
+
+Directions stay on this map (no Google Maps): tap a route to use it; **Show route** zooms to the routes, and
+**From my location** follows the phone's GPS position live along whichever drawn route is shortest from where
+the person is (or the one they tapped), switching if another becomes clearly shorter, with the distance and
+time left, a dashed line back to the route when off it, and "You've arrived" at the end. **Drive** appears
+once there's a driving route.
 
 ## Changing a 3D model
 

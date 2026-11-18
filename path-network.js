@@ -75,8 +75,12 @@ export function createPathNetwork(ctx) {
         return best;
     }
 
+    const edgeKey = (a, b) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+
     // Route along the drawn paths, in the same shape as the automatic router's result.
-    function route(A, B) {
+    // `penalty` (optional): Map edgeKey → factor making those lines look longer, used to find an
+    // alternative route that avoids the first one. The result lists the lines it used (edgeKeys).
+    function route(A, B, penalty = null) {
         if (!net.edges.length) return null;
         const starts = attach(A), goals = attach(B);
         if (!starts.length || !goals.length) return null;
@@ -93,7 +97,7 @@ export function createPathNetwork(ctx) {
             done.add(cur);
             if (goalD.has(cur) && cd + goalD.get(cur) < endCost) { endCost = cd + goalD.get(cur); end = cur; }
             for (const { to, len } of adj.get(cur)) {
-                const nd = cd + len;
+                const nd = cd + len * (penalty?.get(edgeKey(cur, to)) || 1);
                 if (nd < (dist.get(to) ?? Infinity)) { dist.set(to, nd); prev.set(to, cur); }
             }
         }
@@ -120,8 +124,9 @@ export function createPathNetwork(ctx) {
         if (A.isRoom) runs[0].pts.unshift(A.center.clone());
         if (B.isRoom) runs[runs.length - 1].pts.push(B.center.clone());
         for (const r of runs) if (r.pts.length === 1) r.pts.push(r.pts[0].clone());
-        console.info(`[paths] route ${A.key} → ${B.key}: ${ids.length} points, ${runs.length} floor(s)`);
-        return { A, B, runs, allow: new Set([A.index, B.index]), drawn: true };
+        if (!penalty) console.info(`[paths] route ${A.key} → ${B.key}: ${ids.length} points, ${runs.length} floor(s)`);
+        const edgeKeys = ids.slice(1).map((id, k) => edgeKey(ids[k], id));
+        return { A, B, runs, allow: new Set([A.index, B.index]), drawn: true, edgeKeys };
     }
 
     /* ---------- editor ---------- */
