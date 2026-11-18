@@ -2,6 +2,8 @@
 node_modules
 site-upload
 tools
+# duplicate copy of the project (52 MB, includes the uncompressed models)
+BSC-Navigation-Map-System
 server.js
 package.json
 pnpm-lock.yaml
