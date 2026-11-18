@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
-    "compress-models": "node tools/compress-models.mjs"
+    "build-models": "node tools/build-models.mjs",
+    "compress-models": "node tools/build-models.mjs"
   }
 }

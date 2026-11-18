@@ -27,8 +27,11 @@ still open Google Maps for turn-by-turn navigation.
 
 ## Changing a 3D model
 
-Replace the file in `models/`, then run `pnpm compress-models` (the site loads the compressed
-`models/*.fbx.gz` copies). To rebuild the main campus paths from the models:
+Replace the `.fbx` file in `models/`, then run `pnpm build-models`. The site loads compact copies of
+the models (`models/*.model.gz`, about 3× smaller and much quicker to open than the `.fbx`); the tool
+makes them, checks each one matches its `.fbx` exactly, and also refreshes the `models/*.fbx.gz`
+fallbacks. Models can't use textures (the compact format leaves them out; the tool stops if it finds one).
+Commit the new files. To rebuild the main campus paths from the models:
 `node tools/generate-paths.mjs` (see the top of that file).
 
 ## Publishing

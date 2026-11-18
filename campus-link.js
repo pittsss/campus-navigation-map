@@ -81,6 +81,116 @@
     document.querySelectorAll('.campus2 .mode-switch button').forEach(b =>
         b.addEventListener('click', () => setMode(b.dataset.mode)));
 
+    /* ---------- "From my location": needs the device's location (GPS) ---------- */
+    // Rather than letting Google Maps guess where the person is, ask the device for a precise fix
+    // (GPS where available) and give Google that exact starting point.
+    const GOOD_ACCURACY_M = 25;      // stop waiting once the fix is this accurate
+    const MAX_WAIT_MS = 15000;       // …or after this long, using the best fix so far
+    const ROUGH_ACCURACY_M = 100;    // worse than this: warn that the location is approximate
+    const fromHere = $('campus2FromHere');
+    const locStatus = $('campus2LocStatus');
+    let locating = false, myMarker = null, myCircle = null;
+
+    function showLoc(html, warn = false) {
+        locStatus.innerHTML = html;
+        locStatus.classList.toggle('warn', warn);
+        locStatus.hidden = !html;
+    }
+    const HOW_TO_ENABLE =
+        'Turn on <strong>Location</strong> (GPS) on your phone, then allow location for this site: tap the icon ' +
+        'next to the web address, choose <strong>Permissions → Location → Allow</strong>, and try again. ' +
+        'On iPhone, also check <strong>Settings → Privacy → Location Services</strong> for your browser ' +
+        '(with <strong>Precise Location</strong> on).';
+
+    // Watches the position for a few seconds and keeps the most accurate reading
+    // (the first fix often comes from Wi-Fi or cell towers; GPS sharpens it).
+    function locate() {
+        return new Promise((resolve, reject) => {
+            let best = null;
+            const finish = () => {
+                navigator.geolocation.clearWatch(watch);
+                clearTimeout(timer);
+                best ? resolve(best) : reject({ code: 3 });
+            };
+            const watch = navigator.geolocation.watchPosition(pos => {
+                if (!best || pos.coords.accuracy < best.coords.accuracy) best = pos;
+                showLoc(`Finding your location… (accurate to about ${Math.round(best.coords.accuracy)} m so far)`);
+                if (best.coords.accuracy <= GOOD_ACCURACY_M) finish();
+            }, err => {
+                if (err.code === 1 || !best) { navigator.geolocation.clearWatch(watch); clearTimeout(timer); reject(err); }
+            }, { enableHighAccuracy: true, maximumAge: 0, timeout: MAX_WAIT_MS });
+            const timer = setTimeout(finish, MAX_WAIT_MS);
+        });
+    }
+
+    function showMeOnMap(pos) {
+        if (!map) return;
+        const L = window.L, at = [pos.coords.latitude, pos.coords.longitude];
+        if (!myMarker) {
+            myCircle = L.circle(at, { radius: pos.coords.accuracy, color: '#1a73e8', weight: 1, fillOpacity: 0.12, interactive: false }).addTo(map);
+            myMarker = L.marker(at, { icon: L.divIcon({ className: 'campus2-me', iconSize: [16, 16] }), keyboard: false, zIndexOffset: 2000 })
+                .bindTooltip('You are here', { direction: 'top', offset: [0, -8] }).addTo(map);
+        } else {
+            myMarker.setLatLng(at);
+            myCircle.setLatLng(at).setRadius(pos.coords.accuracy);
+        }
+        map.fitBounds(L.latLngBounds([at, there.pos]), { padding: [28, 28], maxZoom: 17 });
+    }
+
+    fromHere.addEventListener('click', async e => {
+        e.preventDefault();
+        if (locating) return;
+        if (!window.isSecureContext || !('geolocation' in navigator)) {
+            showLoc('This browser can’t share your location here. Open the site in Chrome or Safari ' +
+                '(over <strong>https://</strong>) to get directions from where you are.', true);
+            return;
+        }
+        try {
+            const perm = await navigator.permissions?.query({ name: 'geolocation' });
+            if (perm?.state === 'denied') { showLoc(`Location is blocked for this site. ${HOW_TO_ENABLE}`, true); return; }
+        } catch { /* Permissions API not available: just ask */ }
+
+        locating = true;
+        const label = fromHere.textContent;
+        fromHere.textContent = 'Finding you…';
+        fromHere.classList.add('busy');
+        showLoc('Allow location access when your browser asks, so the route starts from exactly where you are.');
+        try {
+            const pos = await locate();
+            const acc = Math.round(pos.coords.accuracy);
+            const url = directionsUrl(mode, { lat: pos.coords.latitude, lng: pos.coords.longitude });
+            showMeOnMap(pos);
+            fromHere.href = url;   // a second tap opens the same route
+            const rough = acc > ROUGH_ACCURACY_M;
+            const accText = rough
+                ? `Your location is only approximate (about ${acc} m). For a more accurate start, turn on GPS / ` +
+                  '<strong>Precise Location</strong> and tap again.'
+                : `Location found (accurate to about ${acc} m).`;
+            // Browsers block new tabs opened too long after the tap; if so, the button is ready to tap again.
+            const win = window.open(url, '_blank');   // (not 'noopener': that always returns null)
+            if (win) win.opener = null;
+            showLoc(win === null
+                ? `${accText} Tap <strong>From my location</strong> again to open the directions.`
+                : `${accText} Opening Google Maps…`, rough);
+            if (win === null) {
+                // Next tap: open the prepared route straight away.
+                const once = ev => { ev.stopImmediatePropagation(); fromHere.removeEventListener('click', once, true); setTimeout(() => setMode(mode), 0); };
+                fromHere.addEventListener('click', once, true);
+            } else {
+                setTimeout(() => setMode(mode), 0);
+            }
+        } catch (err) {
+            const msg = err.code === 1 ? `Location access was not allowed. ${HOW_TO_ENABLE}`
+                : err.code === 3 ? 'Couldn’t find your location in time. Turn on <strong>Location</strong> (GPS), move near a window or outdoors, and try again.'
+                : `Couldn’t get your location. ${HOW_TO_ENABLE}`;
+            showLoc(msg, true);
+        } finally {
+            locating = false;
+            fromHere.textContent = label;
+            fromHere.classList.remove('busy');
+        }
+    });
+
     function updateMeta() {
         const pts = routes[mode];
         if (pts.length > 1) {
