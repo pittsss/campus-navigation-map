@@ -22,8 +22,12 @@ The small map under "BSC Agricultural Laboratory" shows a hand-drawn route (Goog
 Open `map.html?editroute=1` while `pnpm dev` is running. Pick **Walk** or **Drive**, then click along the
 real route starting at the main campus (switch to **Satellite** to see footpaths). Click the line to add a
 point in between, drag a point to move it, click a point to delete it. Press **Save**: the route is stored in
-`campus-route.json`. Commit and push it to publish. The "From main campus" / "From my location" buttons
-still open Google Maps for turn-by-turn navigation.
+`campus-route.json`. Commit and push it to publish.
+
+Directions stay on this map (no Google Maps): **Show route** zooms to the drawn route, and **From my location**
+follows the phone's GPS position along it live, with the distance and time left, a dashed line back to the
+route when off it, and "You've arrived" at the end. The **Drive** option only appears once a driving route
+has been drawn.
 
 ## Changing a 3D model
 

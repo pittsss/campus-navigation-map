@@ -119,7 +119,7 @@
                 <ol id="steps" class="steps"></ol>
             </section>
 
-            <!-- BSC Agricultural Laboratory (second campus): hand-drawn route + Google Maps navigation links -->
+            <!-- BSC Agricultural Laboratory (second campus): hand-drawn route with live directions (campus-link.js) -->
             <section class="card campus2" aria-labelledby="campus2Title">
                 <div class="campus2-head">
                     <div>
@@ -134,8 +134,8 @@
                 <!-- Hand-drawn route (campus-route.json); draw it at map.html?editroute=1 -->
                 <div id="campus2Map" class="campus2-map" role="region"></div>
                 <div class="campus2-actions">
-                    <a id="campus2FromMain" class="btn primary" target="_blank" rel="noopener">From main campus</a>
-                    <a id="campus2FromHere" class="btn ghost" target="_blank" rel="noopener">From my location</a>
+                    <button id="campus2FromMain" class="btn ghost" type="button">Show route</button>
+                    <button id="campus2FromHere" class="btn primary" type="button">From my location</button>
                 </div>
                 <p id="campus2LocStatus" class="campus2-loc-status" aria-live="polite" hidden></p>
             </section>

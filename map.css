@@ -682,9 +682,16 @@ input {
     }
 
     .app {
-        grid-template-columns: 1fr;
+        /* minmax(0, …): never wider than the screen (plain 1fr grows to fit the widest content,
+           which made the page scroll sideways and taps land in the wrong place on phones) */
+        grid-template-columns: minmax(0, 1fr);
         grid-template-rows: 58vh auto;
         height: auto;
+    }
+
+    .panel,
+    .viewport {
+        min-width: 0;
     }
 
     .viewport {
@@ -848,6 +855,50 @@ input {
 .campus2-actions .btn.busy {
     opacity: 0.7;
     cursor: progress;
+}
+
+.campus2-actions .btn.stop {
+    background: var(--red);
+    border-color: var(--red);
+    color: #fff;
+}
+
+.campus2-acc {
+    color: var(--muted);
+}
+
+.campus2-map-controls {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+}
+
+.mode-switch[hidden],
+.mode-switch button[hidden] {
+    display: none;
+}
+
+/* Full screen map (button on the map; automatic on phones while getting directions) */
+.campus2.fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    margin: 0;
+    border-radius: 0;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    background: var(--panel);
+    overflow: auto;
+}
+
+.campus2.fullscreen .campus2-map {
+    flex: 1;
+    min-height: 240px;
+    height: auto;
+}
+
+body.campus2-fullscreen {
+    overflow: hidden;
 }
 
 .campus2-me {

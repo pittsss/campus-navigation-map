@@ -1,7 +1,7 @@
-// Campus switch + the route between the two campuses.
-// The route shown on the small map is drawn by hand (campus-route.json), not worked out by Google,
-// because Google's route between the campuses is wrong. Draw / fix it at map.html?editroute=1.
-// The "From main campus" / "From my location" buttons still open Google Maps for turn-by-turn navigation.
+// Campus switch + the route between the two campuses, on a Leaflet map (no Google Maps).
+// The route is drawn by hand (campus-route.json) because Google's route between the campuses is wrong;
+// draw / fix it at map.html?editroute=1. "From my location" follows the person's GPS position along
+// that route live, with the distance and time left.
 (function () {
     const CAMPUSES = {
         main: {
@@ -25,7 +25,6 @@
     const here = CAMPUSES[site];
     const there = CAMPUSES[site === 'agri' ? 'main' : 'agri'];
 
-    const ll = p => `${p.lat},${p.lng}`;
     const $ = id => document.getElementById(id);
     const lower = c => (c === CAMPUSES.main ? 'main campus' : c.name);
 
@@ -46,14 +45,8 @@
         return 2 * R * Math.asin(Math.sqrt(h));
     }
     const lengthKm = pts => pts.reduce((s, p, i) => i ? s + distanceKm(pts[i - 1], p) : 0, 0);
-
-    // Opens Google Maps (the app on phones) with the route ready to start.
-    // Without an origin, Google Maps starts from the user's current location.
-    function directionsUrl(mode, from) {
-        const q = new URLSearchParams({ api: '1', destination: ll(there.pos), travelmode: mode });
-        if (from) q.set('origin', ll(from));
-        return `https://www.google.com/maps/dir/?${q}`;
-    }
+    const fmtDist = m => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.max(10, Math.round(m / 10) * 10)} m`);
+    const fmtMin = m => `about ${Math.max(1, Math.round(m / 1000 / SPEED_KMH[mode] * 60))} min`;
 
     /* ---------- state ---------- */
     let mode = 'walking';
@@ -63,140 +56,44 @@
     let map = null, line = null, straight = null, pointLayer = null;
     let editor = null;                           // the drawing tools (map.html?editroute=1)
 
+    const card = document.querySelector('.campus2');
+    const showBtn = $('campus2FromMain');
+    const navBtn = $('campus2FromHere');
+    const locStatus = $('campus2LocStatus');
+
     $('campus2Title').textContent = there.name;
     $('campus2Map').setAttribute('aria-label', `Map of the route from the ${lower(here)} to the ${lower(there)}`);
-    $('campus2FromMain').textContent = site === 'agri' ? 'From the Agri Lab' : 'From main campus';
+
+    // The route as travelled from this page's campus (the file stores it main campus → Agri Lab).
+    const trip = () => (site === 'agri' ? [...routes[mode]].reverse() : routes[mode]);
 
     function setMode(m) {
+        if (nav) stopNav();
         mode = m;
         document.querySelectorAll('.campus2 .mode-switch button').forEach(b => {
             const on = b.dataset.mode === m;
             b.classList.toggle('on', on);
             b.setAttribute('aria-pressed', on);
         });
-        $('campus2FromMain').href = directionsUrl(m, here.pos);
-        $('campus2FromHere').href = directionsUrl(m, null);
         draw();
     }
     document.querySelectorAll('.campus2 .mode-switch button').forEach(b =>
         b.addEventListener('click', () => setMode(b.dataset.mode)));
 
-    /* ---------- "From my location": needs the device's location (GPS) ---------- */
-    // Rather than letting Google Maps guess where the person is, ask the device for a precise fix
-    // (GPS where available) and give Google that exact starting point.
-    const GOOD_ACCURACY_M = 25;      // stop waiting once the fix is this accurate
-    const MAX_WAIT_MS = 15000;       // …or after this long, using the best fix so far
-    const ROUGH_ACCURACY_M = 100;    // worse than this: warn that the location is approximate
-    const fromHere = $('campus2FromHere');
-    const locStatus = $('campus2LocStatus');
-    let locating = false, myMarker = null, myCircle = null;
-
-    function showLoc(html, warn = false) {
-        locStatus.innerHTML = html;
-        locStatus.classList.toggle('warn', warn);
-        locStatus.hidden = !html;
-    }
-    const HOW_TO_ENABLE =
-        'Turn on <strong>Location</strong> (GPS) on your phone, then allow location for this site: tap the icon ' +
-        'next to the web address, choose <strong>Permissions → Location → Allow</strong>, and try again. ' +
-        'On iPhone, also check <strong>Settings → Privacy → Location Services</strong> for your browser ' +
-        '(with <strong>Precise Location</strong> on).';
-
-    // Watches the position for a few seconds and keeps the most accurate reading
-    // (the first fix often comes from Wi-Fi or cell towers; GPS sharpens it).
-    function locate() {
-        return new Promise((resolve, reject) => {
-            let best = null;
-            const finish = () => {
-                navigator.geolocation.clearWatch(watch);
-                clearTimeout(timer);
-                best ? resolve(best) : reject({ code: 3 });
-            };
-            const watch = navigator.geolocation.watchPosition(pos => {
-                if (!best || pos.coords.accuracy < best.coords.accuracy) best = pos;
-                showLoc(`Finding your location… (accurate to about ${Math.round(best.coords.accuracy)} m so far)`);
-                if (best.coords.accuracy <= GOOD_ACCURACY_M) finish();
-            }, err => {
-                if (err.code === 1 || !best) { navigator.geolocation.clearWatch(watch); clearTimeout(timer); reject(err); }
-            }, { enableHighAccuracy: true, maximumAge: 0, timeout: MAX_WAIT_MS });
-            const timer = setTimeout(finish, MAX_WAIT_MS);
+    // Only offer a travel mode once its route has been drawn (all of them while drawing).
+    function updateModeButtons() {
+        document.querySelectorAll('.campus2 .mode-switch button').forEach(b => {
+            b.hidden = !editing && b.dataset.mode !== 'walking' && routes[b.dataset.mode].length < 2;
         });
+        const sw = document.querySelector('.campus2 .mode-switch');
+        sw.hidden = [...sw.querySelectorAll('button')].filter(b => !b.hidden).length < 2;
     }
-
-    function showMeOnMap(pos) {
-        if (!map) return;
-        const L = window.L, at = [pos.coords.latitude, pos.coords.longitude];
-        if (!myMarker) {
-            myCircle = L.circle(at, { radius: pos.coords.accuracy, color: '#1a73e8', weight: 1, fillOpacity: 0.12, interactive: false }).addTo(map);
-            myMarker = L.marker(at, { icon: L.divIcon({ className: 'campus2-me', iconSize: [16, 16] }), keyboard: false, zIndexOffset: 2000 })
-                .bindTooltip('You are here', { direction: 'top', offset: [0, -8] }).addTo(map);
-        } else {
-            myMarker.setLatLng(at);
-            myCircle.setLatLng(at).setRadius(pos.coords.accuracy);
-        }
-        map.fitBounds(L.latLngBounds([at, there.pos]), { padding: [28, 28], maxZoom: 17 });
-    }
-
-    fromHere.addEventListener('click', async e => {
-        e.preventDefault();
-        if (locating) return;
-        if (!window.isSecureContext || !('geolocation' in navigator)) {
-            showLoc('This browser can’t share your location here. Open the site in Chrome or Safari ' +
-                '(over <strong>https://</strong>) to get directions from where you are.', true);
-            return;
-        }
-        try {
-            const perm = await navigator.permissions?.query({ name: 'geolocation' });
-            if (perm?.state === 'denied') { showLoc(`Location is blocked for this site. ${HOW_TO_ENABLE}`, true); return; }
-        } catch { /* Permissions API not available: just ask */ }
-
-        locating = true;
-        const label = fromHere.textContent;
-        fromHere.textContent = 'Finding you…';
-        fromHere.classList.add('busy');
-        showLoc('Allow location access when your browser asks, so the route starts from exactly where you are.');
-        try {
-            const pos = await locate();
-            const acc = Math.round(pos.coords.accuracy);
-            const url = directionsUrl(mode, { lat: pos.coords.latitude, lng: pos.coords.longitude });
-            showMeOnMap(pos);
-            fromHere.href = url;   // a second tap opens the same route
-            const rough = acc > ROUGH_ACCURACY_M;
-            const accText = rough
-                ? `Your location is only approximate (about ${acc} m). For a more accurate start, turn on GPS / ` +
-                  '<strong>Precise Location</strong> and tap again.'
-                : `Location found (accurate to about ${acc} m).`;
-            // Browsers block new tabs opened too long after the tap; if so, the button is ready to tap again.
-            const win = window.open(url, '_blank');   // (not 'noopener': that always returns null)
-            if (win) win.opener = null;
-            showLoc(win === null
-                ? `${accText} Tap <strong>From my location</strong> again to open the directions.`
-                : `${accText} Opening Google Maps…`, rough);
-            if (win === null) {
-                // Next tap: open the prepared route straight away.
-                const once = ev => { ev.stopImmediatePropagation(); fromHere.removeEventListener('click', once, true); setTimeout(() => setMode(mode), 0); };
-                fromHere.addEventListener('click', once, true);
-            } else {
-                setTimeout(() => setMode(mode), 0);
-            }
-        } catch (err) {
-            const msg = err.code === 1 ? `Location access was not allowed. ${HOW_TO_ENABLE}`
-                : err.code === 3 ? 'Couldn’t find your location in time. Turn on <strong>Location</strong> (GPS), move near a window or outdoors, and try again.'
-                : `Couldn’t get your location. ${HOW_TO_ENABLE}`;
-            showLoc(msg, true);
-        } finally {
-            locating = false;
-            fromHere.textContent = label;
-            fromHere.classList.remove('busy');
-        }
-    });
 
     function updateMeta() {
         const pts = routes[mode];
         if (pts.length > 1) {
-            const km = lengthKm(pts);
-            const min = Math.max(1, Math.round(km / SPEED_KMH[mode] * 60));
-            $('campus2Meta').textContent = `${km.toFixed(1)} km · about ${min} min ${mode === 'walking' ? 'walk' : 'drive'}`;
+            const m = lengthKm(pts) * 1000;
+            $('campus2Meta').textContent = `${fmtDist(m)} · ${fmtMin(m)} ${mode === 'walking' ? 'walk' : 'drive'}`;
         } else {
             $('campus2Meta').textContent = `About ${distanceKm(here.pos, there.pos).toFixed(1)} km from here (straight line)`;
         }
@@ -204,7 +101,13 @@
     }
     updateMeta();
 
-    /* ---------- the small map (Leaflet, loaded once the 3D map is up so it doesn't slow that down) ---------- */
+    function showStatus(html, warn = false) {
+        locStatus.innerHTML = html;
+        locStatus.classList.toggle('warn', warn);
+        locStatus.hidden = !html;
+    }
+
+    /* ---------- the map (Leaflet, loaded once the 3D map is up so it doesn't slow that down) ---------- */
     function loadLeaflet() {
         if (window.L) return Promise.resolve();
         return new Promise((resolve, reject) => {
@@ -235,62 +138,72 @@
         ` "${m}": [` + routes[m].map(p => `\n  [${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}]`).join(',') + (routes[m].length ? '\n ]' : ']')
     ).join(',\n') + '\n}\n';
 
-    let started = false;
-    async function start() {
-        if (started) return;
-        started = true;
-        try {
-            await Promise.all([loadLeaflet(), loadRoutes()]);
-        } catch (err) {
-            console.warn('[campus route]', err);
-            $('campus2Map').textContent = 'The map could not be loaded.';
-            return;
-        }
-        saved = routesJson();
-        const L = window.L;
-        map = L.map('campus2Map', { zoomControl: true, attributionControl: true, scrollWheelZoom: editing });
-        const street = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
-        });
-        const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-            maxZoom: 19, attribution: 'Imagery © Esri, Maxar, Earthstar Geographics',
-        });
-        (editing ? satellite : street).addTo(map);
+    let starting = null;
+    function start() {
+        return (starting ||= (async () => {
+            try {
+                await Promise.all([loadLeaflet(), loadRoutes()]);
+            } catch (err) {
+                console.warn('[campus route]', err);
+                $('campus2Map').textContent = 'The map could not be loaded.';
+                throw err;
+            }
+            saved = routesJson();
+            updateModeButtons();
+            const L = window.L;
+            map = L.map('campus2Map', { zoomControl: true, attributionControl: true, scrollWheelZoom: editing });
+            const street = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
+            });
+            const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                maxZoom: 19, attribution: 'Imagery © Esri, Maxar, Earthstar Geographics',
+            });
+            (editing ? satellite : street).addTo(map);
 
-        // Map / Satellite toggle
-        const Toggle = L.Control.extend({
-            onAdd() {
-                const b = L.DomUtil.create('button', 'campus2-layer-btn');
+            const button = (cls, onClick) => {
+                const b = L.DomUtil.create('button', cls);
                 b.type = 'button';
-                const label = () => (b.textContent = map.hasLayer(satellite) ? 'Map' : 'Satellite');
-                label();
                 L.DomEvent.disableClickPropagation(b);
-                b.addEventListener('click', () => {
-                    const [off, on] = map.hasLayer(satellite) ? [satellite, street] : [street, satellite];
-                    map.removeLayer(off);
-                    on.addTo(map);
-                    label();
-                });
+                b.addEventListener('click', onClick);
                 return b;
-            },
-        });
-        new Toggle({ position: 'topright' }).addTo(map);
+            };
+            // Map / Satellite toggle
+            const layerBtn = button('campus2-layer-btn', () => {
+                const [off, on] = map.hasLayer(satellite) ? [satellite, street] : [street, satellite];
+                map.removeLayer(off);
+                on.addTo(map);
+                layerBtn.textContent = map.hasLayer(satellite) ? 'Map' : 'Satellite';
+            });
+            layerBtn.textContent = map.hasLayer(satellite) ? 'Map' : 'Satellite';
+            // Full screen (handy while walking with a phone)
+            const fullBtn = button('campus2-layer-btn', () => setFullscreen(!card.classList.contains('fullscreen')));
+            fullBtn.textContent = 'Full screen';
+            fullBtn.dataset.role = 'fullscreen';
+            const Controls = L.Control.extend({
+                onAdd() {
+                    const box = L.DomUtil.create('div', 'campus2-map-controls');
+                    box.append(layerBtn, ...(editing ? [] : [fullBtn]));
+                    return box;
+                },
+            });
+            new Controls({ position: 'topright' }).addTo(map);
 
-        const pin = (c, cls) => L.marker(c.pos, {
-            icon: L.divIcon({ className: `campus2-pin ${cls}`, iconSize: [16, 16] }),
-            keyboard: false, zIndexOffset: 1000,
-        }).bindTooltip(c === here ? `${c.name} (you are here)` : c.name, { direction: 'top', offset: [0, -8] }).addTo(map);
-        const pins = [pin(here, 'start'), pin(there, 'end')];
-        // While drawing, clicking a campus pin adds a point exactly on it.
-        if (editing) pins.forEach((p, i) => p.on('click', () => change(() => routes[mode].push(L.latLng((i ? there : here).pos)))));
+            const pin = (c, cls) => L.marker(c.pos, {
+                icon: L.divIcon({ className: `campus2-pin ${cls}`, iconSize: [16, 16] }),
+                keyboard: false, zIndexOffset: 1000,
+            }).bindTooltip(c === here ? `${c.name} (you are here)` : c.name, { direction: 'top', offset: [0, -8] }).addTo(map);
+            const pins = [pin(here, 'start'), pin(there, 'end')];
+            // While drawing, clicking a campus pin adds a point exactly on it.
+            if (editing) pins.forEach((p, i) => p.on('click', () => change(() => routes[mode].push(L.latLng((i ? there : here).pos)))));
 
-        line = L.polyline([], { color: '#08733b', weight: 5, opacity: 0.9, lineJoin: 'round', bubblingMouseEvents: false }).addTo(map);
-        straight = L.polyline([here.pos, there.pos], { color: '#5c7366', weight: 2, dashArray: '6 6', interactive: false }).addTo(map);
-        pointLayer = L.layerGroup().addTo(map);
+            line = L.polyline([], { color: '#08733b', weight: 5, opacity: 0.9, lineJoin: 'round', bubblingMouseEvents: false }).addTo(map);
+            straight = L.polyline([here.pos, there.pos], { color: '#5c7366', weight: 2, dashArray: '6 6', interactive: false }).addTo(map);
+            pointLayer = L.layerGroup().addTo(map);
 
-        if (editing) setupEditor(L);
-        new ResizeObserver(() => map.invalidateSize()).observe($('campus2Map'));
-        draw(true);
+            if (editing) setupEditor(L);
+            new ResizeObserver(() => map.invalidateSize()).observe($('campus2Map'));
+            draw(true);
+        })());
     }
 
     function draw(fit = false) {
@@ -300,15 +213,188 @@
         line.setLatLngs(pts);
         if (pts.length > 1) straight.remove(); else straight.addTo(map);
         if (editing) drawPoints();
-        if (fit) {
-            const bounds = window.L.latLngBounds([here.pos, there.pos, ...pts]);
-            map.fitBounds(bounds, { padding: [24, 24] });
-        }
+        if (fit) fitRoute();
     }
+    const fitRoute = () => map.fitBounds(window.L.latLngBounds([here.pos, there.pos, ...routes[mode]]), { padding: [24, 24] });
 
     // The 3D map tells us when it has finished loading; fall back to a timer in case it can't load.
-    window.addEventListener('campusmap:ready', start);
-    setTimeout(start, editing ? 0 : 30000);
+    window.addEventListener('campusmap:ready', () => start().catch(() => {}));
+    setTimeout(() => start().catch(() => {}), editing ? 0 : 30000);
+
+    function setFullscreen(on) {
+        card.classList.toggle('fullscreen', on);
+        document.body.classList.toggle('campus2-fullscreen', on);
+        const b = card.querySelector('[data-role="fullscreen"]');
+        if (b) b.textContent = on ? 'Exit full screen' : 'Full screen';
+        if (map) setTimeout(() => map.invalidateSize(), 50);
+    }
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && card.classList.contains('fullscreen')) setFullscreen(false);
+    });
+
+    /* =========================================================
+       DIRECTIONS ON THE MAP
+    ========================================================= */
+    showBtn.textContent = 'Show route';
+    showBtn.addEventListener('click', async () => {
+        try { await start(); } catch { return; }
+        if (nav) stopNav();
+        card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        fitRoute();
+        const pts = routes[mode];
+        showStatus(pts.length > 1
+            ? `Follow the green line from the ${lower(here)} (green pin) to the ${lower(there)} (red pin): ` +
+              `<strong>${fmtDist(lengthKm(pts) * 1000)}</strong>, ${fmtMin(lengthKm(pts) * 1000)}.`
+            : 'The route hasn’t been drawn yet; the dashed line shows the direction only.');
+    });
+
+    /* ---------- "From my location": live directions along the drawn route, using the device's GPS ---------- */
+    const ARRIVED_M = 30;          // this close to the destination = arrived
+    const OFF_ROUTE_M = 40;        // further than this from the line = show the way back to it
+    const ROUGH_ACCURACY_M = 100;  // worse than this: warn that the location is approximate
+    const HOW_TO_ENABLE =
+        'Turn on <strong>Location</strong> (GPS) on your phone, then allow location for this site: tap the icon ' +
+        'next to the web address, choose <strong>Permissions → Location → Allow</strong>, and try again. ' +
+        'On iPhone, also check <strong>Settings → Privacy → Location Services</strong> for your browser ' +
+        '(with <strong>Precise Location</strong> on).';
+
+    let nav = null;   // { watch, layers, progress, follow, wakeLock, firstFix }
+
+    // Metres in a flat frame around the route (accurate enough over a few km).
+    const toXY = (p, o) => ({ x: (p.lng - o.lng) * 111320 * Math.cos(o.lat * Math.PI / 180), y: (p.lat - o.lat) * 110540 });
+
+    // Closest point on the route to `p`: { at: {lat,lng}, seg, along (m from start), off (m from the line) }.
+    // Prefers spots at or past the progress made so far, so a route that doubles back doesn't jump backwards.
+    function snap(pts, p, progress) {
+        const o = pts[0], q = toXY(p, o), xy = pts.map(v => toXY(v, o));
+        let walked = 0, best = null, ahead = null;
+        for (let i = 1; i < xy.length; i++) {
+            const a = xy[i - 1], b = xy[i], dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
+            const t = len ? Math.max(0, Math.min(1, ((q.x - a.x) * dx + (q.y - a.y) * dy) / (len * len))) : 0;
+            const x = a.x + t * dx, y = a.y + t * dy;
+            const c = {
+                seg: i, along: walked + t * len, off: Math.hypot(q.x - x, q.y - y),
+                at: { lat: pts[i - 1].lat + t * (pts[i].lat - pts[i - 1].lat), lng: pts[i - 1].lng + t * (pts[i].lng - pts[i - 1].lng) },
+            };
+            if (!best || c.off < best.off) best = c;
+            if (c.along >= progress - 30 && (!ahead || c.off < ahead.off)) ahead = c;
+            walked += len;
+        }
+        return ahead && ahead.off <= best.off + 20 ? ahead : best;
+    }
+
+    function stopNav(message) {
+        if (!nav) return;
+        navigator.geolocation.clearWatch(nav.watch);
+        nav.layers.forEach(l => l.remove());
+        nav.wakeLock?.release?.().catch(() => {});
+        nav = null;
+        line.setStyle({ opacity: 0.9 });
+        navBtn.textContent = 'From my location';
+        navBtn.classList.remove('busy', 'stop');
+        showStatus(message || '');
+    }
+
+    function onPosition(pos) {
+        const L = window.L;
+        const me = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        const acc = Math.round(pos.coords.accuracy);
+        let pts = trip();
+        if (pts.length < 2) pts = [here.pos, there.pos];   // no route drawn: straight towards the destination
+
+        const s = snap(pts, me, nav.progress);
+        nav.progress = Math.max(nav.progress, s.along);
+        const total = lengthKm(pts) * 1000;
+        const toGoRoute = Math.max(0, total - s.along);
+        const toGo = toGoRoute + (s.off > OFF_ROUTE_M ? s.off : 0);
+        const atDest = distanceKm(me, there.pos) * 1000;
+
+        // Route split at the person's spot: done (grey) and still to go (green); dashed blue back to the line.
+        const [dot, ring, done, left, back] = nav.layers;
+        dot.setLatLng(me);
+        ring.setLatLng(me).setRadius(pos.coords.accuracy);
+        done.setLatLngs([...pts.slice(0, s.seg), s.at]);
+        left.setLatLngs([s.at, ...pts.slice(s.seg)]);
+        back.setLatLngs(s.off > 10 ? [me, s.at] : []);
+
+        if (nav.firstFix) {
+            nav.firstFix = false;
+            map.fitBounds(L.latLngBounds([me, s.at, there.pos]), { padding: [36, 36], maxZoom: 18 });
+        } else if (nav.follow) {
+            map.panTo(me, { animate: true });
+        }
+
+        if (atDest <= ARRIVED_M || (toGoRoute <= ARRIVED_M && s.off <= OFF_ROUTE_M)) {
+            stopNav(`<strong>You’ve arrived</strong> at the ${lower(there)}.`);
+            return;
+        }
+        const parts = [`<strong>${fmtDist(toGo)}</strong> to the ${lower(there)} · ${fmtMin(toGo)}`];
+        if (s.off > OFF_ROUTE_M) parts.push(`You’re about ${fmtDist(s.off)} from the route: head to the green line (dashed blue).`);
+        else parts.push('Keep following the green line.');
+        if (acc > ROUGH_ACCURACY_M) parts.push(`Your location is only approximate (about ${acc} m). Turn on GPS / <strong>Precise Location</strong> for a more accurate position.`);
+        else parts.push(`<span class="campus2-acc">Location accurate to about ${acc} m.</span>`);
+        showStatus(parts.join('<br>'), acc > ROUGH_ACCURACY_M || s.off > OFF_ROUTE_M);
+    }
+
+    navBtn.addEventListener('click', async e => {
+        e.preventDefault();
+        if (nav) { stopNav(); return; }
+        if (!window.isSecureContext || !('geolocation' in navigator)) {
+            showStatus('This browser can’t share your location here. Open the site in Chrome or Safari ' +
+                '(over <strong>https://</strong>) to get directions from where you are.', true);
+            return;
+        }
+        try {
+            const perm = await navigator.permissions?.query({ name: 'geolocation' });
+            if (perm?.state === 'denied') { showStatus(`Location is blocked for this site. ${HOW_TO_ENABLE}`, true); return; }
+        } catch { /* Permissions API not available: just ask */ }
+        try { await start(); } catch { return; }
+
+        const L = window.L;
+        nav = {
+            progress: 0, follow: true, firstFix: true, wakeLock: null,
+            layers: [
+                L.marker(here.pos, { icon: L.divIcon({ className: 'campus2-me', iconSize: [18, 18] }), keyboard: false, zIndexOffset: 2000, interactive: false }),
+                L.circle(here.pos, { radius: 0, color: '#1a73e8', weight: 1, fillOpacity: 0.12, interactive: false }),
+                L.polyline([], { color: '#8a9a90', weight: 5, opacity: 0.8, lineJoin: 'round', interactive: false }),
+                L.polyline([], { color: '#08733b', weight: 7, opacity: 1, lineJoin: 'round', interactive: false }),
+                L.polyline([], { color: '#1a73e8', weight: 3, dashArray: '6 7', interactive: false }),
+            ],
+        };
+        line.setStyle({ opacity: 0 });
+        navBtn.textContent = 'Finding you…';
+        navBtn.classList.add('busy');
+        showStatus('Allow location access when your browser asks, so the directions start from exactly where you are.');
+        card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        if (window.matchMedia('(max-width: 820px)').matches) setFullscreen(true);
+        map.once('dragstart', () => nav && (nav.follow = false));   // stop following once the person moves the map
+        try { nav.wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* screen may still turn off */ }
+
+        let added = false;
+        nav.watch = navigator.geolocation.watchPosition(pos => {
+            if (!nav) return;
+            if (!added) {
+                added = true;
+                nav.layers.slice().reverse().forEach(l => l.addTo(map));
+                navBtn.textContent = 'Stop';
+                navBtn.classList.remove('busy');
+                navBtn.classList.add('stop');
+            }
+            onPosition(pos);
+        }, err => {
+            if (!nav) return;
+            // Already going and the signal drops for a moment (slow or no GPS update): keep the last
+            // position and wait for the next one. Only a withdrawn permission stops the directions.
+            if (added && err.code !== 1) {
+                locStatus.querySelector('.campus2-acc')?.replaceChildren('Waiting for a GPS signal…');
+                return;
+            }
+            stopNav();
+            showStatus(err.code === 1 ? `Location access was not allowed. ${HOW_TO_ENABLE}`
+                : err.code === 3 ? 'Couldn’t find your location in time. Turn on <strong>Location</strong> (GPS), move near a window or outdoors, and try again.'
+                : `Couldn’t get your location. ${HOW_TO_ENABLE}`, true);
+        }, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+    });
 
     /* =========================================================
        ROUTE EDITOR (map.html?editroute=1)
@@ -359,7 +445,6 @@
     }
 
     function setupEditor() {
-        const card = document.querySelector('.campus2');
         card.classList.add('editing');
         editor = document.createElement('div');
         editor.className = 'campus2-editor';
