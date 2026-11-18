@@ -755,10 +755,86 @@ input {
 
 .campus2-map {
     width: 100%;
-    height: 200px;
+    height: 220px;
     border: 1px solid var(--line);
     border-radius: 10px;
     background: var(--bg);
+    overflow: hidden;
+    z-index: 0;              /* keep the map's own layers below the page's menus */
+    font: inherit;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.campus2.editing .campus2-map {
+    height: min(460px, 60vh);
+}
+
+.campus2-pin {
+    border-radius: 50%;
+    border: 3px solid #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.campus2-pin.start { background: var(--green); }
+.campus2-pin.end { background: var(--red); }
+
+.campus2-vertex {
+    border-radius: 50%;
+    background: #fff;
+    border: 3px solid var(--green);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    cursor: move;
+}
+
+.campus2-vertex.first,
+.campus2-vertex.last {
+    background: var(--green);
+}
+
+.campus2-layer-btn {
+    border: 2px solid rgba(0, 0, 0, 0.2);
+    background: #fff;
+    color: var(--green-dark);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.campus2-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.campus2-help {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.45;
+}
+
+.campus2-help strong {
+    color: var(--ink);
+}
+
+.campus2-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.campus2-tools .btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.campus2-status {
+    font-size: 12px;
+    color: var(--green-dark);
+    font-weight: 600;
 }
 
 .campus2-actions {

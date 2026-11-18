@@ -1,6 +1,7 @@
 // Tiny static file server for the campus map (no dependencies).
 // Usage:  node server.js   →  http://localhost:3000
-// Also saves hand-drawn walking paths (map.html?edit=1 → Save) to paths.json — only from this computer.
+// Also saves hand-drawn walking paths (map.html?edit=1 → Save) to paths.json and the route between
+// the campuses (map.html?editroute=1 → Save) to campus-route.json — only from this computer.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -8,6 +9,7 @@ const path = require('path');
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
 const PATHS_FILE = path.join(ROOT, 'paths.json');
+const ROUTE_FILE = path.join(ROOT, 'campus-route.json');   // route between the campuses (map.html?editroute=1)
 const TYPES = {
     '.html': 'text/html; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
@@ -23,8 +25,9 @@ const TYPES = {
 
 const isLocal = req => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
 
-function savePaths(req, res) {
-    if (!isLocal(req)) { res.writeHead(403); return res.end('Paths can only be saved from this computer.'); }
+// Saves an edited JSON file (walking paths, or the route between the campuses) — only from this computer.
+function saveJson(req, res, file) {
+    if (!isLocal(req)) { res.writeHead(403); return res.end('This can only be saved from this computer.'); }
     let body = '';
     req.on('data', chunk => {
         body += chunk;
@@ -39,17 +42,18 @@ function savePaths(req, res) {
             res.writeHead(400);
             return res.end(`Invalid paths: ${err.message}`);
         }
-        fs.writeFile(PATHS_FILE, JSON.stringify(data, null, 1), err => {
+        fs.writeFile(file, JSON.stringify(data, null, 1), err => {
             res.writeHead(err ? 500 : 200, { 'Content-Type': 'text/plain' });
             res.end(err ? `Couldn't save: ${err.message}` : 'saved');
-            if (!err) console.log(`Saved walking paths to ${PATHS_FILE}`);
+            if (!err) console.log(`Saved ${file}`);
         });
     });
 }
 
 http.createServer((req, res) => {
     let urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-    if (req.method === 'POST' && urlPath === '/api/paths') return savePaths(req, res);
+    if (req.method === 'POST' && urlPath === '/api/paths') return saveJson(req, res, PATHS_FILE);
+    if (req.method === 'POST' && urlPath === '/api/campus-route') return saveJson(req, res, ROUTE_FILE);
     if (urlPath.endsWith('/')) urlPath += 'index.html';
     const file = path.join(ROOT, path.normalize(urlPath));
     if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end('Forbidden'); }

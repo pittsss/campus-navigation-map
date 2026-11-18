@@ -239,10 +239,16 @@ async function loadFBX(floor, progress) {
         loader.setResponseType('arraybuffer');
         loader.load(url, resolve, xhr => progress(floor, xhr), reject);
     });
+    // map.html starts these downloads before the scripts have loaded (window.modelDownloads).
+    const early = window.modelDownloads?.[`${floor.url}.gz`];
+    const fetchEarly = async () => {
+        const tick = setInterval(() => progress(floor, early), 100);
+        try { return await early.promise; } finally { clearInterval(tick); progress(floor, early); }
+    };
     let buffer = null;
     if (typeof DecompressionStream !== 'undefined') {
         try {
-            buffer = await fetchBuffer(`${floor.url}.gz`);
+            buffer = early ? await fetchEarly() : await fetchBuffer(`${floor.url}.gz`);
             const head = new Uint8Array(buffer, 0, 2);
             if (head[0] === 0x1f && head[1] === 0x8b) {   // still gzip (the server didn't unpack it on the way)
                 const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'));
@@ -317,7 +323,11 @@ async function loadFBX(floor, progress) {
         setupLightsAndCamera();
         buildUI();
         setActiveFloor(1);
+        // Compile the shaders before the first frame (in the background where the browser supports it).
+        try { await renderer.compileAsync(scene, camera); } catch { /* the first frame compiles them instead */ }
+        sceneReady = true;
         $('loader').classList.add('done');
+        window.dispatchEvent(new Event('campusmap:ready'));
         applyUrlParams();
         if (new URLSearchParams(location.search).has('edit')) pathNet.startEditing();
     } catch (err) {
@@ -1844,7 +1854,11 @@ labelRenderer.domElement.addEventListener('pointermove', e => {
 
 const clock = new THREE.Clock();
 let lastFar = null;
+// Nothing is drawn until loading has finished: the raw models are thousands of small meshes
+// (merged into a few batches at the end), and drawing them even once takes several seconds.
+let sceneReady = false;
 renderer.setAnimationLoop(() => {
+    if (!sceneReady) return;
     const t = clock.getElapsedTime();
     updateTween(performance.now());
     controls.update();

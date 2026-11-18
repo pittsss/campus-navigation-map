@@ -5,15 +5,55 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Campus Map - BSC Campus Navigator</title>
+    <link rel="icon" href="logo.png">
     <link rel="stylesheet" href="map.css">
+    <!-- Start downloading the 3D models straight away, while the scripts below are still loading.
+         map.js picks these downloads up (window.modelDownloads); keep the file names in sync with map.js. -->
+    <script>
+        (function () {
+            if (location.protocol === 'file:' || typeof DecompressionStream === 'undefined') return;
+            var agri = new URLSearchParams(location.search).get('site') === 'agri';
+            var urls = agri ? ['models/agri_lab.fbx.gz']
+                : ['models/unang_palapag.fbx.gz', 'models/2nd_floor.fbx.gz', 'models/3rd_floor_final.fbx.gz'];
+            window.modelDownloads = {};
+            urls.forEach(function (url) {
+                var d = { loaded: 0, total: 0 };
+                d.promise = fetch(url).then(async function (res) {
+                    if (!res.ok) throw new Error(url + ': ' + res.status);
+                    d.total = +res.headers.get('content-length') || 0;
+                    var reader = res.body.getReader(), chunks = [];
+                    for (;;) {
+                        var r = await reader.read();
+                        if (r.done) break;
+                        chunks.push(r.value);
+                        d.loaded += r.value.length;
+                    }
+                    return new Blob(chunks).arrayBuffer();
+                });
+                d.promise.catch(function () {});
+                window.modelDownloads[url] = d;
+            });
+        })();
+    </script>
+    <!-- three.js is served from this site (vendor/three, version 0.160.0); fetched in parallel, not one after another. -->
     <script type="importmap">
     {
         "imports": {
-            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            "three": "./vendor/three/three.module.min.js",
+            "three/addons/": "./vendor/three/addons/"
         }
     }
     </script>
+    <link rel="modulepreload" href="vendor/three/three.module.min.js">
+    <link rel="modulepreload" href="vendor/three/addons/controls/OrbitControls.js">
+    <link rel="modulepreload" href="vendor/three/addons/loaders/FBXLoader.js">
+    <link rel="modulepreload" href="vendor/three/addons/renderers/CSS2DRenderer.js">
+    <link rel="modulepreload" href="vendor/three/addons/utils/BufferGeometryUtils.js">
+    <link rel="modulepreload" href="vendor/three/addons/libs/fflate.module.js">
+    <link rel="modulepreload" href="vendor/three/addons/curves/NURBSCurve.js">
+    <link rel="modulepreload" href="vendor/three/addons/curves/NURBSUtils.js">
+    <link rel="modulepreload" href="path-network.js">
+    <link rel="modulepreload" href="map.js">
 </head>
 
 <body>
@@ -82,7 +122,7 @@
                 <ol id="steps" class="steps"></ol>
             </section>
 
-            <!-- BSC Agricultural Laboratory (second campus, Google Maps) -->
+            <!-- BSC Agricultural Laboratory (second campus): hand-drawn route + Google Maps navigation links -->
             <section class="card campus2" aria-labelledby="campus2Title">
                 <div class="campus2-head">
                     <div>
@@ -94,8 +134,8 @@
                         <button type="button" data-mode="driving" aria-pressed="false">Drive</button>
                     </div>
                 </div>
-                <iframe id="campus2Map" class="campus2-map" title="Route from the main campus to the BSC Agricultural Laboratory"
-                    loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+                <!-- Hand-drawn route (campus-route.json); draw it at map.html?editroute=1 -->
+                <div id="campus2Map" class="campus2-map" role="region"></div>
                 <div class="campus2-actions">
                     <a id="campus2FromMain" class="btn primary" target="_blank" rel="noopener">From main campus</a>
                     <a id="campus2FromHere" class="btn ghost" target="_blank" rel="noopener">From my location</a>
