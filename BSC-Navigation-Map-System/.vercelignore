@@ -1,0 +1,14 @@
+# Only the website is published; these stay in the repository but not on the site.
+node_modules
+site-upload
+tools
+server.js
+package.json
+pnpm-lock.yaml
+README.md
+# the browser loads the compressed models (models/*.fbx.gz)
+models/*.fbx
+# older copies of the welcome page
+.html
+.css
+.js

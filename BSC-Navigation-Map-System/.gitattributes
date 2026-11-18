@@ -1,0 +1,4 @@
+# 3D models must be stored byte-for-byte
+*.fbx binary
+*.gz binary
+*.png binary
