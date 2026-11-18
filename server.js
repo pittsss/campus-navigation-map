@@ -42,7 +42,9 @@ function saveJson(req, res, file) {
             res.writeHead(400);
             return res.end(`Invalid paths: ${err.message}`);
         }
-        fs.writeFile(file, JSON.stringify(data, null, 1), err => {
+        // The route file is already laid out one point per line by the page; keep that layout.
+        const text = file === ROUTE_FILE ? body : JSON.stringify(data, null, 1);
+        fs.writeFile(file, text, err => {
             res.writeHead(err ? 500 : 200, { 'Content-Type': 'text/plain' });
             res.end(err ? `Couldn't save: ${err.message}` : 'saved');
             if (!err) console.log(`Saved ${file}`);
